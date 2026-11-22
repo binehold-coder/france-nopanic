@@ -10,7 +10,7 @@ from aiogram import Bot
 from aiogram.types import BotCommand
 
 from . import config
-from .bot import App, build_dispatcher, reminder_loop
+from .bot import App, build_dispatcher, discussion_loop, reminder_loop
 from .channel import Channel
 from .db import Database
 from .llm import LLM
@@ -37,6 +37,7 @@ async def main() -> None:
     ])
     await bot.delete_webhook(drop_pending_updates=False)
     asyncio.create_task(reminder_loop(app, bot))
+    asyncio.create_task(discussion_loop(app, bot))
     if cfg.news_enabled and llm.enabled:
         app.channel = Channel(app, bot, cfg.preview_minutes, cfg.news_model)
         asyncio.create_task(app.channel.loop())

@@ -38,6 +38,7 @@ class App:
         self.locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.awaiting_date: dict[int, int] = {}  # user_id -> letter_id
         self.channel = None  # set in __main__ when news are enabled
+        self.discussion_id: int | None = None  # the channel's comments group, found at runtime
 
     def today(self) -> date:
         return datetime.now(self.tz).date()
@@ -95,6 +96,7 @@ def format_days(days: list[date], lang: str) -> str:
 
 def build_router(app: App) -> Router:
     r = Router()
+    r.message.filter(F.chat.type == "private")  # groups are handled by comments.py
 
     async def user_lang(user_id: int) -> str:
         return await app.db.get_lang(user_id) or "uk"
@@ -446,7 +448,24 @@ async def reminder_loop(app: App, bot: Bot) -> None:
         await asyncio.sleep(300)
 
 
+async def discussion_loop(app: App, bot: Bot) -> None:
+    """Find the channel's linked comments group; re-check every 10 min until it is set up."""
+    while True:
+        try:
+            chat = await bot.get_chat(app.cfg.channel)
+            new = chat.linked_chat_id
+            if new != app.discussion_id:
+                log.info("comments group: %s", new)
+            app.discussion_id = new
+        except Exception:
+            log.warning("cannot read channel %s", app.cfg.channel, exc_info=True)
+        await asyncio.sleep(600)
+
+
 def build_dispatcher(app: App) -> Dispatcher:
+    from .comments import build_comments_router
+
     dp = Dispatcher()
     dp.include_router(build_router(app))
+    dp.include_router(build_comments_router(app))
     return dp

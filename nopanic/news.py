@@ -21,13 +21,36 @@ from .feeds import FEEDS
 
 log = logging.getLogger(__name__)
 
-# (generation time, [(slot time, kind), ...]) — local time. "news" slots are filled only by items
-# that pass the usefulness bar; empty ones stay empty unless the day is below MIN_DAILY_NEWS,
-# then a guide from the bank fills them. "light" is the one kind/funny post of the evening.
-BATCHES: list[tuple[str, list[tuple[str, str]]]] = [
-    ("07:00", [("09:00", "news"), ("12:30", "news")]),
-    ("14:30", [("15:30", "news"), ("18:00", "news"), ("20:30", "light")]),
+# (generation time, [(window start, window end, kind), ...]) — local time. Each day every slot gets
+# a random minute inside its window (stable for the day), so posts don't look machine-timed.
+# "news" slots are filled only by items that pass the usefulness bar; empty ones stay empty unless
+# the day is below MIN_DAILY_NEWS, then a guide from the bank fills them. "light" = one kind/funny post.
+WINDOWS: list[tuple[str, list[tuple[str, str, str]]]] = [
+    ("07:00", [("08:00", "09:00", "news"), ("12:00", "13:00", "news")]),
+    ("14:30", [("15:00", "16:00", "news"), ("18:00", "19:00", "news"), ("20:00", "21:00", "light")]),
 ]
+
+
+def _minutes(hhmm: str) -> int:
+    h, m = hhmm.split(":")
+    return int(h) * 60 + int(m)
+
+
+def slots_for_day(day: str) -> list[tuple[str, list[tuple[str, str]]]]:
+    """BATCHES for a given day: windows turned into concrete HH:MM, same result for the same day."""
+    import random
+
+    out = []
+    for bi, (gen_at, windows) in enumerate(WINDOWS):
+        slots = []
+        for wi, (start, end, kind) in enumerate(windows):
+            rnd = random.Random(f"{day}:{bi}:{wi}")
+            m = rnd.randint(_minutes(start), _minutes(end) - 1)
+            slots.append((f"{m // 60:02d}:{m % 60:02d}", kind))
+        out.append((gen_at, slots))
+    return out
+
+
 MIN_DAILY_NEWS = 2
 MIN_IMPORTANCE = 3          # practical / ukrainians
 WORLD_IMPORTANCE = 5        # major_world: only exceptional events

@@ -136,11 +136,12 @@ class Channel:
         day = now.date().isoformat()
         hhmm = now.strftime("%H:%M")
         soon = (now + timedelta(minutes=2)).strftime("%H:%M")
-        for idx, (gen_at, slots) in enumerate(news.BATCHES):
+        batches = news.slots_for_day(day)
+        for idx, (gen_at, slots) in enumerate(batches):
             if hhmm < gen_at or await self.db.batch_done(day, idx):
                 continue
             remaining = [(t, k) for t, k in slots if t > soon]
-            last_batch = idx == len(news.BATCHES) - 1
+            last_batch = idx == len(batches) - 1
             if not remaining:
                 await self.db.mark_batch(day, idx)
                 continue
