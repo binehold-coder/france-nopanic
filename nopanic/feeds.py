@@ -7,7 +7,6 @@ FEEDS: list[tuple[str, str, str]] = [
     ("franceinfo", "mixed", "https://www.francetvinfo.fr/titres.rss"),
     ("Le Monde", "france", "https://www.lemonde.fr/societe/rss_full.xml"),
     ("Le Figaro", "france", "https://www.lefigaro.fr/rss/figaro_actualites.xml"),
-    ("20 Minutes", "france", "https://www.20minutes.fr/feeds/rss-actu-france.xml"),
     ("20 Minutes", "mixed", "https://www.20minutes.fr/feeds/rss-une.xml"),
     ("Ouest-France", "france", "https://www.ouest-france.fr/rss/une"),
     ("Le Dauphiné", "france", "https://www.ledauphine.com/rss"),
@@ -19,5 +18,4 @@ FEEDS: list[tuple[str, str, str]] = [
     ("BBC", "world", "https://feeds.bbci.co.uk/news/world/europe/rss.xml"),
     ("Euronews", "world", "https://fr.euronews.com/rss"),
     ("20 Minutes", "mixed", "https://www.20minutes.fr/feeds/rss-insolite.xml"),
-    ("franceinfo", "mixed", "https://www.francetvinfo.fr/insolite.rss"),
 ]

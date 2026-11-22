@@ -28,12 +28,13 @@ def test_render_escapes():
 
 async def test_write_posts_drops_invented_items():
     async def create(**kw):
-        return N(content=[N(type="tool_use", input={"posts": [
+        import json
+        return N(content=[N(type="text", text=json.dumps({"posts": [
             {"item": 1, "kind": "france", "emoji": "🚆", "headline": "A", "body": "B"},
             {"item": 99, "kind": "world", "emoji": "🌍", "headline": "X", "body": "Y"},
             {"item": 1, "kind": "world", "emoji": "🌍", "headline": "dup", "body": "dup"},
             {"item": 2, "kind": "light", "emoji": "😊", "headline": "C", "body": "D"},
-        ]})], usage=N(input_tokens=10, output_tokens=5))
+        ]}))], usage=N(input_tokens=10, output_tokens=5))
     client = N(messages=N(create=create))
     drafts, i, o = await news.write_posts(client, "m", [item(1), item(2)], ["france", "world", "light"], [])
     assert [d.headline for d in drafts] == ["A", "C"]

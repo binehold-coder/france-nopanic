@@ -135,32 +135,30 @@ consequences that are not there. If an item is too vague to write 2 sentences, p
 - Do not pick two items about the same story. Avoid repeating topics already covered today.
 - headline: up to 90 characters, no period at the end. body: 2–3 sentences, up to 350 characters.
 - emoji: one fitting emoji for the post.
-Call the tool `news_posts` with one post per slot, in the slot order given.
+Return JSON with one post per slot, in the slot order given.
 """
 
-NEWS_TOOL = {
-    "name": "news_posts",
-    "description": "Posts for the requested slots, in order.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "posts": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "item": {"type": "integer", "description": "Number of the chosen item."},
-                        "kind": {"type": "string", "enum": ["france", "world", "light"]},
-                        "emoji": {"type": "string"},
-                        "headline": {"type": "string"},
-                        "body": {"type": "string"},
-                    },
-                    "required": ["item", "kind", "emoji", "headline", "body"],
+NEWS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "posts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "item": {"type": "integer", "description": "Number of the chosen item."},
+                    "kind": {"type": "string", "enum": ["france", "world", "light"]},
+                    "emoji": {"type": "string"},
+                    "headline": {"type": "string"},
+                    "body": {"type": "string"},
                 },
-            }
-        },
-        "required": ["posts"],
+                "required": ["item", "kind", "emoji", "headline", "body"],
+                "additionalProperties": False,
+            },
+        }
     },
+    "required": ["posts"],
+    "additionalProperties": False,
 }
 
 
@@ -175,19 +173,10 @@ def items_prompt(items: list[Item], kinds: list[str], covered: list[str]) -> str
 
 
 async def write_posts(client, model: str, items: list[Item], kinds: list[str], covered: list[str]) -> tuple[list[Draft], int, int]:
-    resp = await client.messages.create(
-        model=model,
-        max_tokens=4000,
-        system=NEWS_SYSTEM,
-        messages=[{"role": "user", "content": items_prompt(items, kinds, covered)}],
-        tools=[NEWS_TOOL],
-        tool_choice={"type": "tool", "name": "news_posts"},
-    )
-    raw: list[dict] = []
-    for block in resp.content:
-        if getattr(block, "type", None) == "tool_use":
-            raw = list(block.input.get("posts") or [])
-            break
+    from .llm import json_call
+
+    data, resp = await json_call(client, model, NEWS_SYSTEM, items_prompt(items, kinds, covered), NEWS_SCHEMA, 4000)
+    raw: list[dict] = list(data.get("posts") or [])
     drafts: list[Draft] = []
     used: set[int] = set()
     for p in raw:

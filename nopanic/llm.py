@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import base64
+import json
+import logging
+import re
 from dataclasses import dataclass
 from datetime import date
 
@@ -10,6 +13,8 @@ import anthropic
 
 from . import prompts
 from .db import Letter
+
+log = logging.getLogger(__name__)
 
 PDF = "application/pdf"
 IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
@@ -63,6 +68,48 @@ def letter_context(letter: Letter) -> str:
     )
 
 
+_structured_ok: bool | None = None  # does the API accept output_config json_schema for us?
+
+
+def _extract_json(text: str) -> dict:
+    text = text.strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        m = re.search(r"\{.*\}", text, re.S)
+        if not m:
+            raise
+        return json.loads(m.group(0))
+
+
+async def json_call(client, model: str, system: str, content, schema: dict, max_tokens: int):
+    """One request that returns a dict matching `schema`, plus the response (for usage).
+    Uses structured outputs; if the API refuses them, falls back to 'reply with JSON only'."""
+    global _structured_ok
+    messages = [{"role": "user", "content": content}]
+    if _structured_ok is not False:
+        try:
+            resp = await client.messages.create(
+                model=model, max_tokens=max_tokens, system=system, messages=messages,
+                output_config={"format": {"type": "json_schema", "schema": schema}},
+            )
+            text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
+            _structured_ok = True
+            return _extract_json(text), resp
+        except anthropic.BadRequestError as e:
+            if _structured_ok is True:
+                raise
+            log.warning("structured output refused, falling back to plain JSON: %s", e)
+            _structured_ok = False
+    resp = await client.messages.create(
+        model=model, max_tokens=max_tokens, messages=messages,
+        system=system + "\n\nReply with ONLY one JSON object (no prose, no code fences) matching this JSON schema:\n"
+        + json.dumps(schema, ensure_ascii=False),
+    )
+    text = "".join(b.text for b in resp.content if getattr(b, "type", None) == "text")
+    return _extract_json(text), resp
+
+
 class LLM:
     def __init__(self, api_key: str, letter_model: str, chat_model: str):
         self.enabled = bool(api_key)
@@ -78,19 +125,10 @@ class LLM:
         if note:
             ask += f"\nThe user added: {note}"
         content.append({"type": "text", "text": ask})
-        resp = await self.client.messages.create(
-            model=self.letter_model,
-            max_tokens=4000,
-            system=prompts.analysis_system(lang, today.isoformat()),
-            messages=[{"role": "user", "content": content}],
-            tools=[prompts.LETTER_TOOL],
-            tool_choice={"type": "tool", "name": "letter_analysis"},
+        data, resp = await json_call(
+            self.client, self.letter_model, prompts.analysis_system(lang, today.isoformat()),
+            content, prompts.LETTER_SCHEMA, 4000,
         )
-        data: dict = {}
-        for block in resp.content:
-            if getattr(block, "type", None) == "tool_use":
-                data = dict(block.input)
-                break
         explanation = str(data.get("explanation") or "").strip()
         if not explanation:
             raise RuntimeError("model returned no explanation")

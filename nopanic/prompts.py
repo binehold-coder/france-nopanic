@@ -38,28 +38,25 @@ Write the explanation with exactly these sections (headers translated into {lang
 📎 Documents to prepare — list, or "nothing".
 ⚠️ Important — only if there is a risk, a trap, or a specialist is needed. Otherwise omit.
 
-Then call the tool `letter_analysis` with the result. Put the full explanation in `explanation`.
+Return the result as JSON. Put the full explanation in `explanation`.
 Put a faithful transcription of the French text (or the key parts, if long) in `original_text`.
 Set `deadline` to an ISO date (YYYY-MM-DD) only if an exact calendar date can be determined from \
 the document; otherwise null. Describe the deadline in words in `deadline_what` \
 (for example "envoyer les justificatifs à la CAF").
 """
 
-LETTER_TOOL = {
-    "name": "letter_analysis",
-    "description": "Return the explanation of the letter to the user.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "sender": {"type": ["string", "null"], "description": "Organisation that sent it."},
-            "explanation": {"type": "string", "description": "The full explanation for the user."},
-            "original_text": {"type": ["string", "null"], "description": "French text transcription."},
-            "deadline": {"type": ["string", "null"], "description": "YYYY-MM-DD or null."},
-            "deadline_what": {"type": ["string", "null"], "description": "What must be done by then."},
-            "needs_lawyer": {"type": "boolean"},
-        },
-        "required": ["explanation", "original_text", "deadline", "deadline_what", "needs_lawyer"],
+LETTER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "sender": {"type": ["string", "null"], "description": "Organisation that sent it."},
+        "explanation": {"type": "string", "description": "The full explanation for the user."},
+        "original_text": {"type": ["string", "null"], "description": "French text transcription."},
+        "deadline": {"type": ["string", "null"], "description": "YYYY-MM-DD or null."},
+        "deadline_what": {"type": ["string", "null"], "description": "What must be done by then."},
+        "needs_lawyer": {"type": "boolean"},
     },
+    "required": ["sender", "explanation", "original_text", "deadline", "deadline_what", "needs_lawyer"],
+    "additionalProperties": False,
 }
 
 
