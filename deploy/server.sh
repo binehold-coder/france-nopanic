@@ -128,7 +128,14 @@ stage_feeds() {
 	"$VENV/bin/python" -m nopanic.news || true
 }
 
+stage_dry() {
+	say "Пробный отбор новостей (ничего не публикуется)"
+	set -a; . "$ENV_FILE"; set +a
+	"$VENV/bin/python" -m nopanic.news dry
+}
+
 case ${1:-} in
+	dry) stage_dry ;;
 	feeds) stage_feeds ;;
 	python) stage_python ;;
 	env) stage_env ;;

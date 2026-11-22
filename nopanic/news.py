@@ -262,5 +262,22 @@ async def _check() -> None:
     print(f"Всего записей: {len(items)}")
 
 
+async def _dry() -> None:
+    import os
+
+    import anthropic
+
+    items, _ = await fetch_all()
+    fresh = fresh_unique(items, set(), datetime.now(timezone.utc))
+    client = anthropic.AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    model = os.environ.get("NEWS_MODEL", "claude-sonnet-5-5")
+    drafts, light, inp, out = await write_posts(client, model, fresh, 4, True, [])
+    print(f"{len(fresh)} items -> {len(drafts)} useful, light: {bool(light)}; tokens in {inp} out {out}")
+    for d in drafts + ([light] if light else []):
+        print(f"\n[{d.kind}, {d.importance}] {d.source} {d.url}\n{d.emoji} {d.headline}\n{d.body}")
+
+
 if __name__ == "__main__":
-    asyncio.run(_check())
+    import sys
+
+    asyncio.run(_dry() if sys.argv[1:] == ["dry"] else _check())

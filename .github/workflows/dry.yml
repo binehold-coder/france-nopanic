@@ -1,0 +1,19 @@
+name: News dry run
+
+# Push to ops/dry (or run manually): print what the channel would publish now. Nothing is posted.
+on:
+  workflow_dispatch:
+  push:
+    branches: [ops/dry]
+
+jobs:
+  dry:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 5m
+          script: bash /opt/france_nopanic/app/deploy/server.sh dry
