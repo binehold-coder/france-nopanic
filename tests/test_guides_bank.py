@@ -54,3 +54,16 @@ def test_guide_reviews_roundtrip(tmp_path):
         return await db.guide_reviews()
 
     assert asyncio.run(run()) == {"old": ("approved", ""), "a": ("rejected", "d2")}
+
+
+def test_months():
+    assert guides.parse_months("3-8") == frozenset(range(3, 9))
+    assert guides.parse_months("11-2") == frozenset({11, 12, 1, 2})
+    assert guides.parse_months("4, 5") == frozenset({4, 5})
+    assert guides.parse_months("") is None
+    assert guides.parse_months("13") is None
+    g = guides.Guide("s", "🎒", "T", "b", True, guides.parse_months("3-8"))
+    assert guides.in_season(g, 4) and not guides.in_season(g, 11)
+    by_slug = {x.slug: x for x in guides.load_all(ROOT)}
+    assert not guides.in_season(by_slug["shkola"], 11)
+    assert guides.in_season(by_slug["nomery-ekstrenykh"], 11)

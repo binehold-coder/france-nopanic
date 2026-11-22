@@ -5,6 +5,7 @@ Each guide is a file content/guides/<slug>.md:
     emoji: 🪪
     title: Як отримати carte Vitale
     status: approved
+    months: 3-8          (optional: published only in these months; "3-8", "4,5", "11-2")
     ---
     Text of the post (plain text, Ukrainian).
     🔗 https://www.ameli.fr/...   (optional source line)
@@ -31,11 +32,44 @@ class Guide:
     title: str
     body: str
     approved: bool
+    months: frozenset[int] | None = None  # None = any time of year
 
     @property
     def digest(self) -> str:
         """Fingerprint of the text: an approval in the bot is valid only for the text that was read."""
         return hashlib.sha1(f"{self.emoji}\n{self.title}\n{self.body}".encode()).hexdigest()[:12]
+
+
+def parse_months(spec: str) -> frozenset[int] | None:
+    """'3-8' → Mar..Aug, '11-2' → Nov..Feb, '4,5' → Apr, May. Empty/invalid → None (all year)."""
+    out: set[int] = set()
+    for part in (spec or "").replace(" ", "").split(","):
+        if not part:
+            continue
+        a, _, b = part.partition("-")
+        if not a.isdigit() or (b and not b.isdigit()):
+            return None
+        start, end = int(a), int(b or a)
+        if not (1 <= start <= 12 and 1 <= end <= 12):
+            return None
+        m = start
+        while True:
+            out.add(m)
+            if m == end:
+                break
+            m = m % 12 + 1
+    return frozenset(out) or None
+
+
+def in_season(g: Guide, month: int) -> bool:
+    return g.months is None or month in g.months
+
+
+def season_label(g: Guide) -> str:
+    if g.months is None:
+        return ""
+    names = ["", "січ", "лют", "бер", "квіт", "трав", "черв", "лип", "серп", "вер", "жовт", "лист", "груд"]
+    return "🗓 " + ", ".join(names[m] for m in sorted(g.months))
 
 
 def content_dir() -> Path:
@@ -53,7 +87,8 @@ def parse(slug: str, text: str) -> Guide | None:
             meta[k.strip().lower()] = v.strip()
     if not meta.get("title") or not body.strip():
         return None
-    return Guide(slug, meta.get("emoji", "📘"), meta["title"], body.strip(), meta.get("status") == "approved")
+    return Guide(slug, meta.get("emoji", "📘"), meta["title"], body.strip(), meta.get("status") == "approved",
+                 parse_months(meta.get("months", "")))
 
 
 def load_all(directory: Path | None = None) -> list[Guide]:

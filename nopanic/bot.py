@@ -270,13 +270,17 @@ def build_router(app: App) -> Router:
 
         undecided = await undecided_guides()
         todo = bank if show_all else undecided
-        ready = sum(1 for g in bank if guides.is_approved(g, reviews) and g.slug not in used)
-        lines = [f"{icon(g)} {g.title}" for g in bank]
-        head = (f"📘 Гайдов: {len(bank)}, готовы к публикации: {ready}." if ru else
-                f"📘 Гайдів: {len(bank)}, готові до публікації: {ready}.")
+        month = app.today().month
+        ready = sum(1 for g in bank if guides.is_approved(g, reviews) and g.slug not in used
+                    and guides.in_season(g, month))
+        lines = [f"{icon(g)} {g.title}" + (f"  ({guides.season_label(g)})" if g.months else "") for g in bank]
+        head = (f"📘 Гайдов: {len(bank)}, готовы к публикации сейчас: {ready}." if ru else
+                f"📘 Гайдів: {len(bank)}, готові до публікації зараз: {ready}.")
         legend = ("📝 на проверке · ✅ одобрен · 🚫 отклонён · 📤 уже был в канале\n"
+                  "🗓 — сезонный, выходит только в эти месяцы.\n"
                   "Если текст гайда изменился, он снова попадает на проверку." if ru else
                   "📝 на перевірці · ✅ схвалено · 🚫 відхилено · 📤 вже був у каналі\n"
+                  "🗓 — сезонний, виходить лише в ці місяці.\n"
                   "Якщо текст гайду змінився, він знову потрапляє на перевірку.")
         tail = (f"\n\nНиже — {len(todo)} на проверку." if ru else f"\n\nНижче — {len(todo)} на перевірку.") if todo else (
             "\n\nВсё проверено. /guides all — показать все снова." if ru else
