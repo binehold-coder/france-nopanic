@@ -10,12 +10,14 @@ Each guide is a file content/guides/<slug>.md:
     🔗 https://www.ameli.fr/...   (optional source line)
 
 Only approved guides are published — Женя approves each one after reading it, either by
-`status: approved` in the file or with the ✅ button under /guides in the bot (stored in the DB,
-which wins over the file, so a ✅/🚫 in the bot always has the last word).
+`status: approved` in the file or with the ✅ button under /guides in the bot (stored in the DB
+with the text fingerprint; it wins over the file, and if the text is edited later the guide goes back
+to review automatically).
 """
 
 from __future__ import annotations
 
+import hashlib
 import html
 import os
 from dataclasses import dataclass
@@ -29,6 +31,11 @@ class Guide:
     title: str
     body: str
     approved: bool
+
+    @property
+    def digest(self) -> str:
+        """Fingerprint of the text: an approval in the bot is valid only for the text that was read."""
+        return hashlib.sha1(f"{self.emoji}\n{self.title}\n{self.body}".encode()).hexdigest()[:12]
 
 
 def content_dir() -> Path:
@@ -74,8 +81,12 @@ def render(g: Guide) -> str:
     return f"{e(g.emoji)} <b>{e(g.title)}</b>\n\n" + "\n".join(lines)
 
 
-def is_approved(g: Guide, reviews: dict[str, str]) -> bool:
-    decision = reviews.get(g.slug)
-    if decision is not None:
-        return decision == "approved"
-    return g.approved
+def decision(g: Guide, reviews: dict[str, tuple[str, str]]) -> str | None:
+    """Owner's decision from the bot for THIS text ('approved' / 'rejected'), or None."""
+    r = reviews.get(g.slug)
+    return r[0] if r and r[1] == g.digest else None
+
+
+def is_approved(g: Guide, reviews: dict[str, tuple[str, str]]) -> bool:
+    d = decision(g, reviews)
+    return d == "approved" if d is not None else g.approved

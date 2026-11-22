@@ -60,7 +60,8 @@ CREATE INDEX IF NOT EXISTS posts_day ON posts(day, slot);
 CREATE TABLE IF NOT EXISTS guide_reviews (
     slug TEXT PRIMARY KEY,
     status TEXT NOT NULL,
-    reviewed_at TEXT NOT NULL
+    reviewed_at TEXT NOT NULL,
+    digest TEXT NOT NULL DEFAULT ''
 );
 CREATE TABLE IF NOT EXISTS usage (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -97,6 +98,9 @@ class Database:
     async def init(self) -> None:
         async with aiosqlite.connect(self.path) as db:
             await db.executescript(SCHEMA)
+            cur = await db.execute("PRAGMA table_info(guide_reviews)")
+            if "digest" not in {r[1] for r in await cur.fetchall()}:  # table created on 22.11.2026 without it
+                await db.execute("ALTER TABLE guide_reviews ADD COLUMN digest TEXT NOT NULL DEFAULT ''")
             await db.commit()
 
     # --- users -------------------------------------------------------------
@@ -275,18 +279,19 @@ class Database:
             cur = await db.execute("SELECT url FROM posts WHERE url LIKE 'guide:%' AND status != 'cancelled'")
             return {r[0][6:] for r in await cur.fetchall()}
 
-    async def guide_reviews(self) -> dict[str, str]:
-        """Owner decisions made in the bot: slug -> 'approved' | 'rejected'."""
+    async def guide_reviews(self) -> dict[str, tuple[str, str]]:
+        """Owner decisions made in the bot: slug -> (status 'approved'|'rejected', text digest)."""
         async with aiosqlite.connect(self.path) as db:
-            cur = await db.execute("SELECT slug, status FROM guide_reviews")
-            return {r[0]: r[1] for r in await cur.fetchall()}
+            cur = await db.execute("SELECT slug, status, digest FROM guide_reviews")
+            return {r[0]: (r[1], r[2]) for r in await cur.fetchall()}
 
-    async def set_guide_review(self, slug: str, status: str) -> None:
+    async def set_guide_review(self, slug: str, status: str, digest: str) -> None:
         async with aiosqlite.connect(self.path) as db:
             await db.execute(
-                "INSERT INTO guide_reviews (slug, status, reviewed_at) VALUES (?, ?, ?)"
-                " ON CONFLICT(slug) DO UPDATE SET status = excluded.status, reviewed_at = excluded.reviewed_at",
-                (slug, status, _now()))
+                "INSERT INTO guide_reviews (slug, status, reviewed_at, digest) VALUES (?, ?, ?, ?)"
+                " ON CONFLICT(slug) DO UPDATE SET status = excluded.status,"
+                " reviewed_at = excluded.reviewed_at, digest = excluded.digest",
+                (slug, status, _now(), digest))
             await db.commit()
 
     # --- usage / stats -----------------------------------------------------

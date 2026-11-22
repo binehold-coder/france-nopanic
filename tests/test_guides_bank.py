@@ -22,26 +22,35 @@ def test_callback_data_fits_telegram_limit():
         assert len(f"gda:{g.slug}".encode()) <= 64, g.slug
 
 
-def test_bot_decision_wins_over_file_status():
+def test_bot_decision_wins_and_is_tied_to_text():
     g = guides.Guide("x", "📘", "T", "body", approved=False)
+    d = g.digest
     assert not guides.is_approved(g, {})
-    assert guides.is_approved(g, {"x": "approved"})
+    assert guides.is_approved(g, {"x": ("approved", d)})
+    assert not guides.is_approved(g, {"x": ("approved", "old")})  # text changed → back to review
     g.approved = True
     assert guides.is_approved(g, {})
-    assert not guides.is_approved(g, {"x": "rejected"})
+    assert not guides.is_approved(g, {"x": ("rejected", d)})
 
 
 def test_guide_reviews_roundtrip(tmp_path):
     import asyncio
 
+    import aiosqlite
+
     from nopanic.db import Database
 
     async def run():
-        db = Database(str(tmp_path / "t.db"))
+        path = str(tmp_path / "t.db")
+        async with aiosqlite.connect(path) as raw:  # table as created by the previous version
+            await raw.execute("CREATE TABLE guide_reviews (slug TEXT PRIMARY KEY, status TEXT NOT NULL,"
+                              " reviewed_at TEXT NOT NULL)")
+            await raw.execute("INSERT INTO guide_reviews VALUES ('old', 'approved', 'x')")
+            await raw.commit()
+        db = Database(path)
         await db.init()
-        await db.set_guide_review("a", "approved")
-        await db.set_guide_review("a", "rejected")
-        await db.set_guide_review("b", "approved")
+        await db.set_guide_review("a", "approved", "d1")
+        await db.set_guide_review("a", "rejected", "d2")
         return await db.guide_reviews()
 
-    assert asyncio.run(run()) == {"a": "rejected", "b": "approved"}
+    assert asyncio.run(run()) == {"old": ("approved", ""), "a": ("rejected", "d2")}

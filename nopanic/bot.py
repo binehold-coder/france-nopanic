@@ -239,6 +239,11 @@ def build_router(app: App) -> Router:
             InlineKeyboardButton(text="🚫 Отклонить" if ru else "🚫 Відхилити", callback_data=f"gdr:{slug}"),
         ]])
 
+    async def undecided_guides() -> list:
+        from . import guides
+        reviews = await app.db.guide_reviews()
+        return [g for g in guides.load_all() if guides.decision(g, reviews) is None and not g.approved]
+
     @r.message(Command("guides"))
     async def guides_review(message: Message) -> None:
         """/guides — summary + every guide not yet decided; /guides all — every guide again."""
@@ -261,15 +266,18 @@ def build_router(app: App) -> Router:
                 return "📤"
             if guides.is_approved(g, reviews):
                 return "✅"
-            return "🚫" if reviews.get(g.slug) == "rejected" else "📝"
+            return "🚫" if guides.decision(g, reviews) == "rejected" else "📝"
 
-        todo = [g for g in bank if show_all or (g.slug not in reviews and not g.approved)]
+        undecided = await undecided_guides()
+        todo = bank if show_all else undecided
         ready = sum(1 for g in bank if guides.is_approved(g, reviews) and g.slug not in used)
         lines = [f"{icon(g)} {g.title}" for g in bank]
         head = (f"📘 Гайдов: {len(bank)}, готовы к публикации: {ready}." if ru else
                 f"📘 Гайдів: {len(bank)}, готові до публікації: {ready}.")
-        legend = ("📝 черновик · ✅ одобрен · 🚫 отклонён · 📤 уже был в канале" if ru else
-                  "📝 чернетка · ✅ схвалено · 🚫 відхилено · 📤 вже був у каналі")
+        legend = ("📝 на проверке · ✅ одобрен · 🚫 отклонён · 📤 уже был в канале\n"
+                  "Если текст гайда изменился, он снова попадает на проверку." if ru else
+                  "📝 на перевірці · ✅ схвалено · 🚫 відхилено · 📤 вже був у каналі\n"
+                  "Якщо текст гайду змінився, він знову потрапляє на перевірку.")
         tail = (f"\n\nНиже — {len(todo)} на проверку." if ru else f"\n\nНижче — {len(todo)} на перевірку.") if todo else (
             "\n\nВсё проверено. /guides all — показать все снова." if ru else
             "\n\nУсе перевірено. /guides all — показати всі знову.")
@@ -278,6 +286,15 @@ def build_router(app: App) -> Router:
             await message.answer(guides.render(g), parse_mode=ParseMode.HTML,
                                  link_preview_options=LinkPreviewOptions(is_disabled=True),
                                  reply_markup=guide_keyboard(g.slug, ru))
+        if len(undecided) > 1:
+            await message.answer(
+                (f"Прочитал все {len(undecided)}? Можно одобрить разом — те, что хочешь убрать, "
+                 "потом отклонишь кнопкой под постом.") if ru else
+                (f"Прочитав усі {len(undecided)}? Можна схвалити разом — ті, що хочеш прибрати, "
+                 "потім відхилиш кнопкою під постом."),
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
+                    text=(f"✅ Одобрить все {len(undecided)}" if ru else f"✅ Схвалити всі {len(undecided)}"),
+                    callback_data="gdall")]]))
 
     @r.callback_query(F.data.startswith(("gda:", "gdr:")))
     async def guide_decide(cb: CallbackQuery) -> None:
@@ -287,12 +304,13 @@ def build_router(app: App) -> Router:
         from . import guides
         ru = await user_lang(cb.from_user.id) == "ru"
         action, slug = cb.data.split(":", 1)
-        if slug not in {g.slug for g in guides.load_all()}:
+        g = next((x for x in guides.load_all() if x.slug == slug), None)
+        if g is None:
             await cb.answer("Этого гайда больше нет." if ru else "Цього гайду більше немає.", show_alert=True)
             return
         status = "approved" if action == "gda" else "rejected"
-        await app.db.set_guide_review(slug, status)
-        log.info("guide %s: %s", status, slug)
+        await app.db.set_guide_review(slug, status, g.digest)
+        log.info("guide %s: %s %s", status, slug, g.digest)
         text = (("✅ Одобрен — пойдёт в канал в день, когда мало новостей." if ru else
                  "✅ Схвалено — піде в канал у день, коли мало новин.") if status == "approved" else
                 ("🚫 Отклонён — в канал не пойдёт. Что исправить — напиши Claude." if ru else
@@ -304,9 +322,35 @@ def build_router(app: App) -> Router:
                 "✅ Передумал — одобрить" if ru else "✅ Передумав — схвалити")
             await cb.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
                 InlineKeyboardButton(text=label, callback_data=f"{other}:{slug}")]]))
-            await cb.message.reply(text)
         except Exception:
             pass
+
+    @r.callback_query(F.data.in_({"gdall", "gdall_ok", "gdall_no"}))
+    async def guide_approve_all(cb: CallbackQuery) -> None:
+        if not app.cfg.is_owner(cb.from_user.id):
+            await cb.answer()
+            return
+        ru = await user_lang(cb.from_user.id) == "ru"
+        todo = await undecided_guides()
+        if cb.data == "gdall":
+            await cb.answer()
+            await cb.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text=(f"Да, одобрить {len(todo)}" if ru else f"Так, схвалити {len(todo)}"),
+                                     callback_data="gdall_ok"),
+                InlineKeyboardButton(text="Отмена" if ru else "Скасувати", callback_data="gdall_no"),
+            ]]))
+            return
+        if cb.data == "gdall_no":
+            await cb.answer("Ок")
+            await cb.message.edit_reply_markup(reply_markup=None)
+            return
+        for g in todo:
+            await app.db.set_guide_review(g.slug, "approved", g.digest)
+            log.info("guide approved (bulk): %s %s", g.slug, g.digest)
+        text = (f"✅ Одобрено: {len(todo)}. Передумаешь — кнопка под постом или /guides all." if ru else
+                f"✅ Схвалено: {len(todo)}. Передумаєш — кнопка під постом або /guides all.")
+        await cb.answer(text)
+        await cb.message.edit_text(text)
 
     @r.callback_query(F.data.startswith(("npc:", "npn:")))
     async def news_action(cb: CallbackQuery) -> None:
