@@ -572,6 +572,20 @@ async def reminder_loop(app: App, bot: Bot) -> None:
         await asyncio.sleep(300)
 
 
+async def check_comments_access(bot: Bot, group_id: int) -> None:
+    """Log whether Telegram will deliver comments to the bot at all."""
+    try:
+        me = await bot.me()
+        member = await bot.get_chat_member(group_id, me.id)
+        log.info("comments access: status=%s, privacy_off=%s",
+                 member.status, me.can_read_all_group_messages)
+        if member.status not in ("administrator", "creator") and not me.can_read_all_group_messages:
+            log.warning("comments: bot is NOT admin in the group and privacy mode is ON — "
+                        "Telegram will not deliver comments. Make the bot an admin of the group.")
+    except Exception as e:  # noqa: BLE001
+        log.warning("comments access check failed (bot not in the group?): %s", e)
+
+
 async def discussion_loop(app: App, bot: Bot) -> None:
     """Find the channel's linked comments group; re-check every 10 min until it is set up."""
     while True:
@@ -580,6 +594,8 @@ async def discussion_loop(app: App, bot: Bot) -> None:
             new = chat.linked_chat_id
             if new != app.discussion_id:
                 log.info("comments group: %s", new)
+                if new:
+                    await check_comments_access(bot, new)
             app.discussion_id = new
         except Exception:
             log.warning("cannot read channel %s", app.cfg.channel, exc_info=True)

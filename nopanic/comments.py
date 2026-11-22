@@ -93,16 +93,23 @@ def build_comments_router(app) -> Router:
     @r.message(F.chat.type.in_({"group", "supergroup"}), F.text)
     async def on_comment(message: Message, bot: Bot) -> None:
         if not app.discussion_id or message.chat.id != app.discussion_id:
+            log.info("comment: ignored, chat %s is not the comments group %s", message.chat.id, app.discussion_id)
             return
         if message.is_automatic_forward or not message.from_user or message.from_user.is_bot:
             return
         if message.sender_chat:  # posted as a channel/anonymous admin
+            log.info("comment: skipped, sent as chat %s (anonymous admin / channel)", message.sender_chat.id)
             return
         me = await bot.me()
         ctx = context_of(message, me.id)
-        if ctx is None or not app.llm.enabled or len(message.text) < 8:
+        if ctx is None:
+            log.info("comment: skipped, not a reply to a channel post or to the bot (msg %s)", message.message_id)
+            return
+        if not app.llm.enabled or len(message.text) < 8:
+            log.info("comment: skipped, llm=%s len=%d", app.llm.enabled, len(message.text))
             return
         if not limits.allow(message.from_user.id):
+            log.info("comment: skipped, rate limit for user %s", message.from_user.id)
             return
         try:
             data, resp = await json_call(
@@ -115,6 +122,7 @@ def build_comments_router(app) -> Router:
             log.exception("comment answer failed")
             return
         text = str(data.get("text") or "").strip()
+        log.info("comment %s: model reply=%s", message.message_id, bool(data.get("reply") and text))
         if data.get("reply") and text:
             await message.reply(text[:1500])
 
