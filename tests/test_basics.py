@@ -15,7 +15,7 @@ def test_split_message_respects_limit():
 
 def test_texts_have_both_languages_and_format():
     for key, table in T.items():
-        assert set(table) == {"uk", "ru"}, key
+        assert set(table) == {"uk", "ru", "fr"}, key
     assert "3" in t("free_n", "ru", n=3)
     assert t("left", "xx", n=1).startswith("Залишилось")
 

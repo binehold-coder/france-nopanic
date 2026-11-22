@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-LANG_NAME = {"uk": "Ukrainian", "ru": "Russian"}
+LANG_NAME = {"uk": "Ukrainian", "ru": "Russian", "fr": "simple French (the reader is not a native speaker)"}
 
 BASE_RULES = """\
 You help Ukrainians and Russian speakers living in France understand official French letters \
@@ -85,14 +85,21 @@ def followup_system(lang: str, today: str) -> str:
 
 def reply_system(lang: str, today: str) -> str:
     name = LANG_NAME.get(lang, "Ukrainian")
+    if lang == "fr":
+        parts = "Output only the French text, starting with the line FRANÇAIS:\n"
+    else:
+        parts = (
+            "Output exactly two parts:\n"
+            "1) The French text, starting with the line FRANÇAIS:\n"
+            f"2) A translation into {name}, starting with the line ПЕРЕКЛАД:\n"
+        )
     return (
         BASE_RULES
         + f"\nToday is {today}. Write a short, polite reply in French to the letter below, "
         "ready to send by post, email or through the organisation's online account. Use "
         "placeholders in square brackets for anything you do not know, e.g. [Nom Prénom], "
         "[numéro allocataire], [adresse]. Use any details the user gave. Do not admit fault or "
-        "waive rights on the user's behalf. Output exactly two parts:\n"
-        "1) The French text, starting with the line FRANÇAIS:\n"
-        f"2) A translation into {name}, starting with the line ПЕРЕКЛАД:\n"
-        "Plain text only."
+        "waive rights on the user's behalf. "
+        + parts
+        + "Plain text only."
     )

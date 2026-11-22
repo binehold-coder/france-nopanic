@@ -51,7 +51,14 @@ class App:
 def lang_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text="🇺🇦 Українська", callback_data="lang:uk"),
+        InlineKeyboardButton(text="🇫🇷 Français", callback_data="lang:fr"),
         InlineKeyboardButton(text="Русский", callback_data="lang:ru"),
+    ]])
+
+
+def change_lang_keyboard(lang: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text=t("btn_change_lang", lang), callback_data="chlang"),
     ]])
 
 
@@ -120,7 +127,7 @@ def build_router(app: App) -> Router:
 
     async def send_welcome(message: Message, lang: str) -> None:
         free = t("free_n", lang, n=app.cfg.free_letters)
-        await message.answer(t("welcome", lang, free=free))
+        await message.answer(t("welcome", lang, free=free), reply_markup=change_lang_keyboard(lang))
         await message.answer(t("disclaimer", lang) + "\n" + t("privacy", lang))
 
     @r.message(Command("lang"))
@@ -132,7 +139,7 @@ def build_router(app: App) -> Router:
     @r.callback_query(F.data.startswith("lang:"))
     async def set_lang(cb: CallbackQuery) -> None:
         lang = cb.data.split(":", 1)[1]
-        if lang not in ("uk", "ru"):
+        if lang not in ("uk", "ru", "fr"):
             return
         first_time = not await app.db.get_lang(cb.from_user.id)
         await app.db.set_lang(cb.from_user.id, lang)
@@ -140,6 +147,11 @@ def build_router(app: App) -> Router:
         await cb.message.edit_text(t("lang_set", lang))
         if first_time and app.allowed(cb.from_user.id):
             await send_welcome(cb.message, lang)
+
+    @r.callback_query(F.data == "chlang")
+    async def ask_lang(cb: CallbackQuery) -> None:
+        await cb.answer()
+        await cb.message.answer(t("choose_lang", None), reply_markup=lang_keyboard())
 
     # --- owner tools -----------------------------------------------------------
     @r.message(Command("stats"))

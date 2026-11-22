@@ -32,7 +32,7 @@ async def main() -> None:
     )
     await bot.set_my_commands([
         BotCommand(command="start", description="Почати / Начать"),
-        BotCommand(command="lang", description="Мова / Язык"),
+        BotCommand(command="lang", description="Мова / Язык / Langue"),
     ])
     await bot.delete_webhook(drop_pending_updates=False)
     asyncio.create_task(reminder_loop(app, bot))
