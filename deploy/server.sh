@@ -92,6 +92,7 @@ stage_env() {
 		echo "ANTHROPIC_API_KEY=$key"
 		echo "OWNER_IDS=$owners"
 		echo "DATABASE_PATH=$DATA/nopanic.db"
+		echo "CONTENT_DIR=$APP/content"
 		grep -E '^[A-Z_]+=' "$APP/deploy/settings.env"
 	} >"$ENV_FILE.new"
 	mv "$ENV_FILE.new" "$ENV_FILE"

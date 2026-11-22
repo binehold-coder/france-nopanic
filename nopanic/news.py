@@ -21,15 +21,18 @@ from .feeds import FEEDS
 
 log = logging.getLogger(__name__)
 
-# (generation time, [(slot time, kind), ...]) — local time
+# (generation time, [(slot time, kind), ...]) — local time. "news" slots are filled only by items
+# that pass the usefulness bar; empty ones stay empty unless the day is below MIN_DAILY_NEWS,
+# then a guide from the bank fills them. "light" is the one kind/funny post of the evening.
 BATCHES: list[tuple[str, list[tuple[str, str]]]] = [
-    ("07:00", [("08:00", "france"), ("09:30", "world"), ("11:00", "france"),
-               ("12:30", "world"), ("14:00", "france")]),
-    ("14:30", [("15:30", "france"), ("17:00", "world"), ("18:30", "france"),
-               ("20:00", "world"), ("21:30", "light")]),
+    ("07:00", [("09:00", "news"), ("12:30", "news")]),
+    ("14:30", [("15:30", "news"), ("18:00", "news"), ("20:30", "light")]),
 ]
+MIN_DAILY_NEWS = 2
+MIN_IMPORTANCE = 3          # practical / ukrainians
+WORLD_IMPORTANCE = 5        # major_world: only exceptional events
 
-MAX_ITEMS = 140
+MAX_ITEMS = 200
 UA = "Mozilla/5.0 (compatible; FranceNoPanicBot/1.0; +https://t.me/france_nopanic)"
 
 
@@ -45,7 +48,8 @@ class Item:
 
 @dataclass
 class Draft:
-    kind: str
+    kind: str          # practical / ukrainians / major_world / light
+    importance: int
     emoji: str
     headline: str
     body: str
@@ -105,15 +109,18 @@ async def fetch_all(feeds=FEEDS) -> tuple[list[Item], dict[str, str]]:
 
 
 def fresh_unique(items: list[Item], seen: set[str], now: datetime, hours: int = 20) -> list[Item]:
-    """Recent, not yet used, one per URL and per near-identical title; newest first."""
-    cutoff = now - timedelta(hours=hours)
+    """Recent, not yet used, one per URL and per near-identical title.
+    Official and Ukrainian sources first (they publish rarely, so they get a 48h window)."""
     out: list[Item] = []
     urls: set[str] = set()
     titles: set[str] = set()
-    for it in sorted(items, key=lambda i: i.published or now, reverse=True):
+    priority = {"official": 0, "ua": 1, "france": 2, "light": 3, "world": 4}
+    ordered = sorted(items, key=lambda i: (priority.get(i.kind, 5), -(i.published or now).timestamp()))
+    for it in ordered:
+        window = timedelta(hours=48 if it.kind in ("official", "ua") else hours)
         if it.url in seen or it.url in urls:
             continue
-        if it.published and it.published < cutoff:
+        if it.published and it.published < now - window:
             continue
         key = re.sub(r"\W+", "", it.title.lower())[:60]
         if key in titles:
@@ -125,26 +132,41 @@ def fresh_unique(items: list[Item], seen: set[str], now: datetime, hours: int = 
 
 
 NEWS_SYSTEM = """\
-You are the editor of the Telegram channel «Франція без паніки» for Ukrainians and Russian \
-speakers living in France. You receive a numbered list of fresh news items (title + short \
-summary + source). Pick items for the requested slots and write short posts in Ukrainian.
+You are the editor of the Telegram channel «Франція без паніки» for Ukrainians (and Russian \
+speakers) who live in France. The channel publishes only what is USEFUL to them. You receive a \
+numbered list of fresh items (source kind, publisher, title, short summary).
 
-Slot kinds:
-- france: news from France that people living here care about or find interesting: daily life, \
-prices, transport, strikes, weather alerts, safety, incidents (fires, accidents), society, \
-culture, sport, science, notable visits. Not only politics. Prefer variety.
-- world: Europe and the world — major events, Ukraine-related news, EU decisions, notable stories.
-- light: the last post of the day — funny, kind, curious or heartwarming. No tragedies.
+Pick items for these categories:
+- practical: France-wide changes that affect daily life, money or paperwork of a foreign resident: \
+CAF and benefits, Assurance Maladie / ameli / CPAM, taxes and declarations, France Travail, \
+préfecture / ANEF / titres de séjour / naturalisation, new rules and "ce qui change" from a date, \
+prices and tariffs (energy, transport, rent rules, banking), nationwide strikes in transport, \
+red/orange weather alerts, school calendar and procedures.
+- ukrainians: ONLY what concerns Ukrainians living abroad: temporary protection status, residence \
+after 2027/2028, documents and passports, consular services, military registration / mobilisation \
+rules for those abroad, payments and aid, programmes for Ukrainians in France or the EU. \
+NOT war events, strikes on cities, front-line news, politics in Ukraine.
+- major_world: ONLY an exceptional global event (new war, pandemic, huge disaster, something that \
+changes life in Europe). Ordinary politics, elections, diplomacy, crime — never.
+- light: one funny, kind, heart-warming or curious story (best from France). No tragedy, no politics.
 
-Rules:
-- Use ONLY facts present in the item's title and summary. Never add numbers, names, causes or \
-consequences that are not there. If an item is too vague to write 2 sentences, pick another.
-- Write in your own words in natural Ukrainian; never copy sentences from the source.
-- Neutral tone, no opinions, no clickbait, no graphic details of violence.
-- Do not pick two items about the same story. Avoid repeating topics already covered today.
-- headline: up to 90 characters, no period at the end. body: 2–3 sentences, up to 350 characters.
-- emoji: one fitting emoji for the post.
-Return JSON with one post per slot, in the slot order given.
+Reject: local incidents, crime, court cases, demonstrations, sport, celebrities, opinion pieces, \
+ordinary politics and parliament debates (unless a rule was actually adopted), advertising, \
+foreign news not about the EU/France, anything only relevant to companies or rich investors.
+
+importance (1–5): how much a typical Ukrainian family in France needs to know it. \
+5 = must act or affects almost everyone; 3 = useful to many; 1–2 = marginal (reject those).
+
+Writing rules (Ukrainian, natural, own words — never copy sentences):
+- Use ONLY facts in the item's title and summary. Never add dates, sums, conditions or names \
+that are not there. If the item is too vague for 2 solid sentences, skip it.
+- headline: up to 90 characters, no final period.
+- body: 2–3 sentences, up to 380 characters; when relevant end with what it means in practice \
+("Що це означає: ...").
+- emoji: one fitting emoji.
+- Never two posts about the same story; do not repeat stories already posted today.
+- It is fine — and expected — to return FEWER posts than asked, or none, if nothing is useful.
+Return JSON.
 """
 
 NEWS_SCHEMA = {
@@ -156,12 +178,13 @@ NEWS_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "item": {"type": "integer", "description": "Number of the chosen item."},
-                    "kind": {"type": "string", "enum": ["france", "world", "light"]},
+                    "kind": {"type": "string", "enum": ["practical", "ukrainians", "major_world", "light"]},
+                    "importance": {"type": "integer"},
                     "emoji": {"type": "string"},
                     "headline": {"type": "string"},
                     "body": {"type": "string"},
                 },
-                "required": ["item", "kind", "emoji", "headline", "body"],
+                "required": ["item", "kind", "importance", "emoji", "headline", "body"],
                 "additionalProperties": False,
             },
         }
@@ -171,26 +194,41 @@ NEWS_SCHEMA = {
 }
 
 
-def items_prompt(items: list[Item], kinds: list[str], covered: list[str]) -> str:
-    lines = [f"Slots to fill, in order: {', '.join(kinds)}."]
+def items_prompt(items: list[Item], news_slots: int, want_light: bool, covered: list[str]) -> str:
+    ask = f"Return at most {news_slots} useful posts (practical / ukrainians / major_world)"
+    ask += " and exactly one light post." if want_light else ". No light post this time."
+    lines = [ask]
     if covered:
         lines.append("Already posted today (do not repeat these stories): " + " | ".join(covered))
     lines.append("\nItems:")
     for i, it in enumerate(items, 1):
-        lines.append(f"[{i}] ({it.kind}, {it.source}) {it.title} — {it.summary}")
+        summary = f" — {it.summary}" if it.summary else ""
+        lines.append(f"[{i}] ({it.kind}, {it.source}) {it.title}{summary}")
     return "\n".join(lines)
 
 
-async def write_posts(client, model: str, items: list[Item], kinds: list[str], covered: list[str]) -> tuple[list[Draft], int, int]:
+def accept(d: Draft) -> bool:
+    if d.kind == "light":
+        return True
+    if d.kind == "major_world":
+        return d.importance >= WORLD_IMPORTANCE
+    return d.kind in ("practical", "ukrainians") and d.importance >= MIN_IMPORTANCE
+
+
+async def write_posts(client, model: str, items: list[Item], news_slots: int, want_light: bool,
+                      covered: list[str]) -> tuple[list[Draft], Draft | None, int, int]:
+    """Returns (news drafts that pass the bar, most important first; light draft or None; tokens)."""
     from .llm import json_call
 
-    data, resp = await json_call(client, model, NEWS_SYSTEM, items_prompt(items, kinds, covered), NEWS_SCHEMA, 4000)
+    data, resp = await json_call(client, model, NEWS_SYSTEM,
+                                 items_prompt(items, news_slots, want_light, covered), NEWS_SCHEMA, 4000)
     raw: list[dict] = list(data.get("posts") or [])
     drafts: list[Draft] = []
     used: set[int] = set()
     for p in raw:
         try:
             idx = int(p["item"])
+            importance = int(p.get("importance") or 0)
         except (KeyError, TypeError, ValueError):
             continue
         if not 1 <= idx <= len(items) or idx in used:
@@ -201,9 +239,11 @@ async def write_posts(client, model: str, items: list[Item], kinds: list[str], c
         body = str(p.get("body") or "").strip()
         if not headline or not body:
             continue
-        drafts.append(Draft(str(p.get("kind") or "france"), str(p.get("emoji") or "📰")[:4],
+        drafts.append(Draft(str(p.get("kind") or ""), importance, str(p.get("emoji") or "📌")[:4],
                             headline[:120], body[:600], it.source, it.url))
-    return drafts, resp.usage.input_tokens, resp.usage.output_tokens
+    light = next((d for d in drafts if d.kind == "light"), None) if want_light else None
+    news = sorted((d for d in drafts if d.kind != "light" and accept(d)), key=lambda d: -d.importance)
+    return news[:news_slots], light, resp.usage.input_tokens, resp.usage.output_tokens
 
 
 def render(d: Draft) -> str:

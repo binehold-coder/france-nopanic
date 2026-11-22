@@ -257,6 +257,19 @@ class Database:
             cur = await db.execute("SELECT url FROM posts WHERE created_at >= datetime('now', ?)", (f"-{days} days",))
             return {r[0] for r in await cur.fetchall()}
 
+    async def cancel_planned_kinds(self, kinds: tuple[str, ...]) -> int:
+        async with aiosqlite.connect(self.path) as db:
+            cur = await db.execute(
+                f"UPDATE posts SET status = 'cancelled' WHERE status IN ('planned', 'previewed')"
+                f" AND kind IN ({','.join('?' * len(kinds))})", kinds)
+            await db.commit()
+            return cur.rowcount
+
+    async def used_guides(self) -> set[str]:
+        async with aiosqlite.connect(self.path) as db:
+            cur = await db.execute("SELECT url FROM posts WHERE url LIKE 'guide:%' AND status != 'cancelled'")
+            return {r[0][6:] for r in await cur.fetchall()}
+
     # --- usage / stats -----------------------------------------------------
     async def log_usage(self, user_id: int, kind: str, model: str, inp: int, out: int) -> None:
         async with aiosqlite.connect(self.path) as db:

@@ -202,12 +202,23 @@ def build_router(app: App) -> Router:
         day = app.today().isoformat()
         posts = await app.db.posts_for_day(day)
         icons = {"planned": "🕒", "previewed": "👀", "publishing": "⏳", "published": "✅",
-                 "cancelled": "❌", "failed": "⚠️"}
+                 "cancelled": "❌", "failed": "⚠️", "expired": "⌛"}
         if not posts:
             await message.answer("Сегодня постов пока нет." if lang == "ru" else "Сьогодні постів поки немає.")
             return
         lines = [f"{icons.get(p['status'], '?')} {p['slot']} [{p['kind']}] {p['headline']}" for p in posts]
         await message.answer("\n".join(lines))
+
+    @r.message(Command("news_test"))
+    async def news_test(message: Message) -> None:
+        if not app.cfg.is_owner(message.from_user.id) or app.channel is None:
+            return
+        await message.answer("⏳ …")
+        try:
+            await app.channel.dry_run(message.chat.id)
+        except Exception as e:  # noqa: BLE001
+            log.exception("news_test failed")
+            await message.answer(f"⚠️ {type(e).__name__}: {e}"[:500])
 
     @r.message(Command("sources"))
     async def sources(message: Message) -> None:

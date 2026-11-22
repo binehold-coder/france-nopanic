@@ -10,12 +10,14 @@ from aiogram import Bot
 from aiogram.enums import ParseMode
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, LinkPreviewOptions
 
-from . import news
+from . import guides, news
 
 log = logging.getLogger(__name__)
 
 MAX_ATTEMPTS = 3
 RETRY_AFTER = timedelta(minutes=15)
+STALE_AFTER = timedelta(minutes=30)
+LEGACY_KINDS = ("france", "world")  # general-news format, retired on 22.11.2026
 
 L = {
     "preview": {"uk": "🕒 О {slot} вийде в канал:", "ru": "🕒 В {slot} выйдет в канал:", "fr": "🕒 Publication à {slot} :"},
@@ -28,6 +30,11 @@ L = {
         "uk": "⚠️ Не вдалося підготувати новини ({err}). Спробую ще раз через 15 хв.",
         "ru": "⚠️ Не получилось подготовить новости ({err}). Попробую ещё раз через 15 мин.",
         "fr": "⚠️ Échec de préparation des actus ({err}). Nouvel essai dans 15 min.",
+    },
+    "bank_low": {
+        "uk": "📘 У банку гайдів залишилось {n}. Попроси Claude підготувати нові.",
+        "ru": "📘 В банке гайдов осталось {n}. Попроси Claude подготовить новые.",
+        "fr": "📘 Il reste {n} guides en réserve.",
     },
     "pub_failed": {"uk": "⚠️ Пост не опубліковано: {err}", "ru": "⚠️ Пост не опубликован: {err}", "fr": "⚠️ Non publié : {err}"},
 }
@@ -71,7 +78,9 @@ class Channel:
                 log.warning("notify %s failed", uid, exc_info=True)
 
     # --- generation ------------------------------------------------------------
-    async def generate(self, day: str, slots: list[tuple[str, str]]) -> int:
+    async def generate(self, day: str, slots: list[tuple[str, str]], last_batch: bool) -> int:
+        news_slots = [t for t, k in slots if k == "news"]
+        light_slot = next((t for t, k in slots if k == "light"), None)
         items, status = await news.fetch_all()
         broken = [u for u, s in status.items() if not s.startswith("ok")]
         if broken:
@@ -81,14 +90,47 @@ class Channel:
         if not fresh:
             raise RuntimeError("no fresh news items")
         covered = [p["headline"] for p in await self.db.posts_for_day(day)]
-        drafts, inp, out = await news.write_posts(
-            self.app.llm.client, self.model, fresh, [k for _, k in slots], covered
+        drafts, light, inp, out = await news.write_posts(
+            self.app.llm.client, self.model, fresh, len(news_slots), light_slot is not None, covered
         )
         await self.db.log_usage(0, "news", self.model, inp, out)
-        for (slot, kind), d in zip(slots, drafts):
-            await self.db.add_post(day, slot, kind, d.headline, news.render(d), d.url)
-        log.info("news batch for %s: %d/%d posts from %d items", day, min(len(drafts), len(slots)), len(slots), len(fresh))
-        return min(len(drafts), len(slots))
+        for slot, d in zip(news_slots, drafts):
+            await self.db.add_post(day, slot, d.kind, d.headline, news.render(d), d.url)
+        if light and light_slot:
+            await self.db.add_post(day, light_slot, "light", light.headline, news.render(light), light.url)
+        log.info("news batch %s: %d useful of %d slots (+light: %s) from %d items",
+                 day, len(drafts), len(news_slots), bool(light), len(fresh))
+        if last_batch:
+            await self.fill_minimum(day, news_slots[len(drafts):])
+        return len(drafts)
+
+    async def dry_run(self, chat_id: int) -> None:
+        """Owner test: what would go out right now — sent only to the owner, nothing is scheduled."""
+        items, _ = await news.fetch_all()
+        fresh = news.fresh_unique(items, await self.db.recent_post_urls(), datetime.now(timezone.utc))
+        drafts, light, inp, out = await news.write_posts(self.app.llm.client, self.model, fresh, 4, True, [])
+        await self.db.log_usage(0, "news_test", self.model, inp, out)
+        await self.bot.send_message(chat_id, f"🧪 {len(fresh)} items → {len(drafts)} useful + light: {'yes' if light else 'no'}")
+        for d in drafts + ([light] if light else []):
+            await self.bot.send_message(chat_id, f"[{d.kind}, {d.importance}]\n\n" + news.render(d),
+                                        parse_mode=ParseMode.HTML,
+                                        link_preview_options=LinkPreviewOptions(is_disabled=True))
+
+    async def fill_minimum(self, day: str, free_slots: list[str]) -> None:
+        """Keep the channel regular: at least MIN_DAILY_NEWS non-light posts a day, topped up with guides."""
+        posts = await self.db.posts_for_day(day)
+        have = sum(1 for p in posts if p["kind"] != "light" and p["status"] not in ("cancelled", "failed"))
+        need = max(news.MIN_DAILY_NEWS - have, 0)
+        if not need or not free_slots:
+            return
+        used = await self.db.used_guides()
+        bank = [g for g in guides.load_all() if g.approved and g.slug not in used]
+        for slot, g in zip(free_slots[:need], bank):
+            await self.db.add_post(day, slot, "guide", g.title, guides.render(g), f"guide:{g.slug}")
+        if len(bank) < need:
+            log.warning("guide bank is empty: %d short today", need - len(bank))
+        if len(bank) <= 3:
+            await self.notify_owners("bank_low", n=len(bank) - min(len(bank), need))
 
     async def maybe_generate(self, now: datetime) -> None:
         day = now.date().isoformat()
@@ -98,6 +140,7 @@ class Channel:
             if hhmm < gen_at or await self.db.batch_done(day, idx):
                 continue
             remaining = [(t, k) for t, k in slots if t > soon]
+            last_batch = idx == len(news.BATCHES) - 1
             if not remaining:
                 await self.db.mark_batch(day, idx)
                 continue
@@ -106,13 +149,15 @@ class Channel:
                 continue
             self.attempts[(day, idx)] = (n + 1, now)
             try:
-                await self.generate(day, remaining)
+                await self.generate(day, remaining, last_batch)
                 await self.db.mark_batch(day, idx)
             except Exception as e:  # noqa: BLE001
                 log.exception("news batch %s/%s failed", day, idx)
                 await self.notify_owners("gen_failed", err=type(e).__name__)
                 if n + 1 >= MAX_ATTEMPTS:
                     await self.db.mark_batch(day, idx)
+                    if last_batch:
+                        await self.fill_minimum(day, [t for t, k in remaining if k == "news"])
 
     # --- preview / publish -------------------------------------------------------
     async def send_preview(self, post: dict) -> None:
@@ -167,9 +212,13 @@ class Channel:
                 if await self.db.set_post_status(post["id"], "previewed", only_if=("planned",)):
                     await self.send_preview(post)
             if post["status"] in ("planned", "previewed") and now >= at:
-                await self.publish(post["id"])
+                if now - at > STALE_AFTER:  # bot was down: don't dump old posts into the channel
+                    await self.db.set_post_status(post["id"], "expired", only_if=("planned", "previewed"))
+                else:
+                    await self.publish(post["id"])
 
     async def loop(self) -> None:
+        await self.db.cancel_planned_kinds(LEGACY_KINDS)
         while True:
             try:
                 await self.tick()
