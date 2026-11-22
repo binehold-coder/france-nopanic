@@ -145,7 +145,9 @@ red/orange weather alerts, school calendar and procedures.
 - ukrainians: ONLY what concerns Ukrainians living abroad: temporary protection status, residence \
 after 2027/2028, documents and passports, consular services, military registration / mobilisation \
 rules for those abroad, payments and aid, programmes for Ukrainians in France or the EU. \
-NOT war events, strikes on cities, front-line news, politics in Ukraine.
+NOT war events, strikes on cities, front-line news, politics in Ukraine. \
+Rules of OTHER EU countries (Austria, Poland, Germany…) — only if it is an EU-wide decision or \
+directly changes things for Ukrainians in France; otherwise reject. France first.
 - major_world: ONLY an exceptional global event (new war, pandemic, huge disaster, something that \
 changes life in Europe). Ordinary politics, elections, diplomacy, crime — never.
 - light: one funny, kind, heart-warming or curious story (best from France). No tragedy, no politics.
