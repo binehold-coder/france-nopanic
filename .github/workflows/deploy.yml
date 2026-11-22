@@ -95,6 +95,15 @@ jobs:
           key: ${{ secrets.DEPLOY_SSH_KEY }}
           script: bash /opt/france_nopanic/app/deploy/server.sh service
 
+      - name: RSS sources check
+        continue-on-error: true
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: bash /opt/france_nopanic/app/deploy/server.sh feeds
+
       - name: Service log (last 60 lines)
         if: always()
         uses: appleboy/ssh-action@v1.2.2

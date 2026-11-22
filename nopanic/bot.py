@@ -37,6 +37,7 @@ class App:
         self.albums: dict[str, list[Message]] = {}
         self.locks: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
         self.awaiting_date: dict[int, int] = {}  # user_id -> letter_id
+        self.channel = None  # set in __main__ when news are enabled
 
     def today(self) -> date:
         return datetime.now(self.tz).date()
@@ -192,6 +193,52 @@ def build_router(app: App) -> Router:
                 (f"❌ Не получилось опубликовать в {app.cfg.channel}: {e}" if ru else
                  f"❌ Не вийшло опублікувати в {app.cfg.channel}: {e}")
             )
+
+    @r.message(Command("news"))
+    async def news_plan(message: Message) -> None:
+        if not app.cfg.is_owner(message.from_user.id):
+            return
+        lang = await user_lang(message.from_user.id)
+        day = app.today().isoformat()
+        posts = await app.db.posts_for_day(day)
+        icons = {"planned": "🕒", "previewed": "👀", "publishing": "⏳", "published": "✅",
+                 "cancelled": "❌", "failed": "⚠️"}
+        if not posts:
+            await message.answer("Сегодня постов пока нет." if lang == "ru" else "Сьогодні постів поки немає.")
+            return
+        lines = [f"{icons.get(p['status'], '?')} {p['slot']} [{p['kind']}] {p['headline']}" for p in posts]
+        await message.answer("\n".join(lines))
+
+    @r.message(Command("sources"))
+    async def sources(message: Message) -> None:
+        if not app.cfg.is_owner(message.from_user.id):
+            return
+        from . import news
+        from .feeds import FEEDS
+        items, status = await news.fetch_all()
+        lines = [f"{'✅' if status[u].startswith('ok') else '❌'} {n} ({k}): {status[u]}" for n, k, u in FEEDS]
+        await message.answer("\n".join(lines) + f"\n\nΣ {len(items)}")
+
+    @r.callback_query(F.data.startswith(("npc:", "npn:")))
+    async def news_action(cb: CallbackQuery) -> None:
+        if not app.cfg.is_owner(cb.from_user.id) or app.channel is None:
+            await cb.answer()
+            return
+        from .channel import tr
+        lang = await user_lang(cb.from_user.id)
+        action, pid = cb.data.split(":")
+        if action == "npc":
+            ok, status = await app.channel.cancel(int(pid))
+            text = tr("cancelled", lang) if ok else tr("too_late", lang, status=status)
+        else:
+            ok, status = await app.channel.publish(int(pid))
+            text = tr("published", lang) if ok else tr("too_late", lang, status=status)
+        await cb.answer(text, show_alert=not ok)
+        try:
+            await cb.message.edit_reply_markup(reply_markup=None)
+            await cb.message.reply(text)
+        except Exception:
+            pass
 
     # --- letters ---------------------------------------------------------------
     @r.message(F.photo | F.document)

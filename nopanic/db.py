@@ -38,6 +38,25 @@ CREATE TABLE IF NOT EXISTS reminders (
     sent INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS reminders_due ON reminders(sent, remind_on);
+CREATE TABLE IF NOT EXISTS news_batches (
+    day TEXT NOT NULL,
+    batch INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (day, batch)
+);
+CREATE TABLE IF NOT EXISTS posts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    day TEXT NOT NULL,
+    slot TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    headline TEXT NOT NULL,
+    html TEXT NOT NULL,
+    url TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'planned',
+    message_id INTEGER,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS posts_day ON posts(day, slot);
 CREATE TABLE IF NOT EXISTS usage (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
@@ -185,6 +204,58 @@ class Database:
         async with aiosqlite.connect(self.path) as db:
             await db.execute("UPDATE reminders SET sent = 1 WHERE id = ?", (reminder_id,))
             await db.commit()
+
+    # --- channel posts -------------------------------------------------------
+    async def batch_done(self, day: str, batch: int) -> bool:
+        async with aiosqlite.connect(self.path) as db:
+            cur = await db.execute("SELECT 1 FROM news_batches WHERE day = ? AND batch = ?", (day, batch))
+            return await cur.fetchone() is not None
+
+    async def mark_batch(self, day: str, batch: int) -> None:
+        async with aiosqlite.connect(self.path) as db:
+            await db.execute("INSERT OR IGNORE INTO news_batches (day, batch, created_at) VALUES (?, ?, ?)",
+                             (day, batch, _now()))
+            await db.commit()
+
+    async def add_post(self, day: str, slot: str, kind: str, headline: str, html: str, url: str) -> int:
+        async with aiosqlite.connect(self.path) as db:
+            cur = await db.execute(
+                "INSERT INTO posts (day, slot, kind, headline, html, url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (day, slot, kind, headline, html, url, _now()),
+            )
+            await db.commit()
+            return cur.lastrowid
+
+    async def posts_for_day(self, day: str) -> list[dict]:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute("SELECT * FROM posts WHERE day = ? ORDER BY slot, id", (day,))
+            return [dict(r) for r in await cur.fetchall()]
+
+    async def get_post(self, post_id: int) -> dict | None:
+        async with aiosqlite.connect(self.path) as db:
+            db.row_factory = aiosqlite.Row
+            cur = await db.execute("SELECT * FROM posts WHERE id = ?", (post_id,))
+            row = await cur.fetchone()
+            return dict(row) if row else None
+
+    async def set_post_status(self, post_id: int, status: str, message_id: int | None = None,
+                              only_if: tuple[str, ...] | None = None) -> bool:
+        """Change status; with only_if, only from those statuses. True if a row changed."""
+        sql = "UPDATE posts SET status = ?, message_id = COALESCE(?, message_id) WHERE id = ?"
+        args: list = [status, message_id, post_id]
+        if only_if:
+            sql += f" AND status IN ({','.join('?' * len(only_if))})"
+            args += list(only_if)
+        async with aiosqlite.connect(self.path) as db:
+            cur = await db.execute(sql, args)
+            await db.commit()
+            return cur.rowcount > 0
+
+    async def recent_post_urls(self, days: int = 3) -> set[str]:
+        async with aiosqlite.connect(self.path) as db:
+            cur = await db.execute("SELECT url FROM posts WHERE created_at >= datetime('now', ?)", (f"-{days} days",))
+            return {r[0] for r in await cur.fetchall()}
 
     # --- usage / stats -----------------------------------------------------
     async def log_usage(self, user_id: int, kind: str, model: str, inp: int, out: int) -> None:

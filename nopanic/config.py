@@ -24,6 +24,9 @@ class Config:
     free_letters: int = 3
     timezone: str = "Europe/Paris"
     reminder_hour: int = 10
+    news_enabled: bool = False
+    news_model: str = "claude-sonnet-5-5"
+    preview_minutes: int = 30
 
     @property
     def is_public(self) -> bool:
@@ -50,4 +53,7 @@ def load() -> Config:
         free_letters=int(env.get("FREE_LETTERS", "3") or 3),
         timezone=env.get("TIMEZONE", "Europe/Paris"),
         reminder_hour=int(env.get("REMINDER_HOUR", "10") or 10),
+        news_enabled=env.get("NEWS_ENABLED", "0").strip() in ("1", "true", "yes"),
+        news_model=env.get("NEWS_MODEL", "claude-sonnet-5-5"),
+        preview_minutes=int(env.get("NEWS_PREVIEW_MIN", "30") or 30),
     )

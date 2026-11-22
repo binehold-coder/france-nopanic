@@ -11,6 +11,7 @@ dependencies = [
     "aiogram>=3.20,<4",
     "anthropic>=2.0,<3",
     "aiosqlite>=0.20",
+    "feedparser>=6",
 ]
 
 [project.optional-dependencies]

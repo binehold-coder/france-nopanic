@@ -122,9 +122,15 @@ stage_service() {
 	die "Бот не запустился за 30 секунд"
 }
 
+stage_feeds() {
+	say "RSS-источники (проверка с сервера)"
+	"$VENV/bin/python" -m nopanic.news || true
+}
+
 case ${1:-} in
+	feeds) stage_feeds ;;
 	python) stage_python ;;
 	env) stage_env ;;
 	service) stage_service ;;
-	*) die "Использование: server.sh python|env|service" ;;
+	*) die "Использование: server.sh python|env|service|feeds" ;;
 esac
