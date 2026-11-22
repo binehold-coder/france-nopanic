@@ -1,0 +1,107 @@
+name: Deploy
+
+# Every push to main: tests first, then deploy to the IONOS VPS (/opt/france_nopanic).
+# Other bots on the server are not touched.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: python -m pytest -q
+      - run: bash -n deploy/server.sh
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Pack code
+        run: git archive --format=tar.gz -o nopanic.tar.gz HEAD
+
+      - name: Upload code
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          source: nopanic.tar.gz
+          target: /tmp/nopanic_deploy
+          overwrite: true
+
+      - name: Unpack code into /opt/france_nopanic/app
+        uses: appleboy/ssh-action@v1.2.2
+        env:
+          DEPLOY_SHA: ${{ github.sha }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: DEPLOY_SHA
+          script: |
+            set -euo pipefail
+            S=""; [ "$(id -u)" = 0 ] || S="sudo -n"
+            if [ ! -d /opt/france_nopanic ]; then
+              $S mkdir -p /opt/france_nopanic && $S chown "$(id -un):$(id -gn)" /opt/france_nopanic
+            fi
+            cd /opt/france_nopanic
+            rm -rf app.new app.old && mkdir app.new
+            tar -xzf /tmp/nopanic_deploy/nopanic.tar.gz -C app.new
+            echo "$DEPLOY_SHA" > app.new/REVISION
+            chmod +x app.new/deploy/*.sh
+            if [ -d app ]; then mv app app.old; fi
+            mv app.new app && rm -rf app.old /tmp/nopanic_deploy
+            echo "Код: $(cut -c1-7 app/REVISION)"
+
+      - name: Python and dependencies
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          command_timeout: 20m
+          script: bash /opt/france_nopanic/app/deploy/server.sh python
+
+      - name: Settings (.env)
+        uses: appleboy/ssh-action@v1.2.2
+        env:
+          BOT_TOKEN: ${{ secrets.FRANCE_NOPANIC_BOT }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: BOT_TOKEN,ANTHROPIC_API_KEY
+          script: bash /opt/france_nopanic/app/deploy/server.sh env
+
+      - name: Service (restart france-nopanic)
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: bash /opt/france_nopanic/app/deploy/server.sh service
+
+      - name: Service log (last 60 lines)
+        if: always()
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            S=""; [ "$(id -u)" = 0 ] || S="sudo -n"
+            $S journalctl -u france-nopanic -n 60 --no-pager --since "-1h" || true

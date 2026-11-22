@@ -1,0 +1,22 @@
+# Installed by deploy/server.sh (@USER@ and @ROOT@ are substituted).
+[Unit]
+Description=Франція без паніки (Telegram bot)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=@USER@
+WorkingDirectory=@ROOT@
+EnvironmentFile=@ROOT@/.env
+ExecStart=@ROOT@/venv/bin/python -m nopanic
+Restart=always
+RestartSec=10
+MemoryMax=300M
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
