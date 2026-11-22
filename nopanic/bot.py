@@ -232,6 +232,82 @@ def build_router(app: App) -> Router:
         lines = [f"{'✅' if status[u].startswith('ok') else '❌'} {n} ({k}): {status[u]}" for n, k, u in FEEDS]
         await message.answer("\n".join(lines) + f"\n\nΣ {len(items)}")
 
+    # --- guide bank review ----------------------------------------------------
+    def guide_keyboard(slug: str, ru: bool) -> InlineKeyboardMarkup:
+        return InlineKeyboardMarkup(inline_keyboard=[[
+            InlineKeyboardButton(text="✅ Одобрить" if ru else "✅ Схвалити", callback_data=f"gda:{slug}"),
+            InlineKeyboardButton(text="🚫 Отклонить" if ru else "🚫 Відхилити", callback_data=f"gdr:{slug}"),
+        ]])
+
+    @r.message(Command("guides"))
+    async def guides_review(message: Message) -> None:
+        """/guides — summary + every guide not yet decided; /guides all — every guide again."""
+        if not app.cfg.is_owner(message.from_user.id):
+            return
+        from aiogram.enums import ParseMode
+        from aiogram.types import LinkPreviewOptions
+        from . import guides
+        ru = await user_lang(message.from_user.id) == "ru"
+        show_all = (message.text or "").strip().lower().endswith("all")
+        bank = guides.load_all()
+        reviews = await app.db.guide_reviews()
+        used = await app.db.used_guides()
+        if not bank:
+            await message.answer("Банк гайдов пуст." if ru else "Банк гайдів порожній.")
+            return
+
+        def icon(g) -> str:
+            if g.slug in used:
+                return "📤"
+            if guides.is_approved(g, reviews):
+                return "✅"
+            return "🚫" if reviews.get(g.slug) == "rejected" else "📝"
+
+        todo = [g for g in bank if show_all or (g.slug not in reviews and not g.approved)]
+        ready = sum(1 for g in bank if guides.is_approved(g, reviews) and g.slug not in used)
+        lines = [f"{icon(g)} {g.title}" for g in bank]
+        head = (f"📘 Гайдов: {len(bank)}, готовы к публикации: {ready}." if ru else
+                f"📘 Гайдів: {len(bank)}, готові до публікації: {ready}.")
+        legend = ("📝 черновик · ✅ одобрен · 🚫 отклонён · 📤 уже был в канале" if ru else
+                  "📝 чернетка · ✅ схвалено · 🚫 відхилено · 📤 вже був у каналі")
+        tail = (f"\n\nНиже — {len(todo)} на проверку." if ru else f"\n\nНижче — {len(todo)} на перевірку.") if todo else (
+            "\n\nВсё проверено. /guides all — показать все снова." if ru else
+            "\n\nУсе перевірено. /guides all — показати всі знову.")
+        await message.answer(head + "\n" + legend + "\n\n" + "\n".join(lines) + tail)
+        for g in todo:
+            await message.answer(guides.render(g), parse_mode=ParseMode.HTML,
+                                 link_preview_options=LinkPreviewOptions(is_disabled=True),
+                                 reply_markup=guide_keyboard(g.slug, ru))
+
+    @r.callback_query(F.data.startswith(("gda:", "gdr:")))
+    async def guide_decide(cb: CallbackQuery) -> None:
+        if not app.cfg.is_owner(cb.from_user.id):
+            await cb.answer()
+            return
+        from . import guides
+        ru = await user_lang(cb.from_user.id) == "ru"
+        action, slug = cb.data.split(":", 1)
+        if slug not in {g.slug for g in guides.load_all()}:
+            await cb.answer("Этого гайда больше нет." if ru else "Цього гайду більше немає.", show_alert=True)
+            return
+        status = "approved" if action == "gda" else "rejected"
+        await app.db.set_guide_review(slug, status)
+        log.info("guide %s: %s", status, slug)
+        text = (("✅ Одобрен — пойдёт в канал в день, когда мало новостей." if ru else
+                 "✅ Схвалено — піде в канал у день, коли мало новин.") if status == "approved" else
+                ("🚫 Отклонён — в канал не пойдёт. Что исправить — напиши Claude." if ru else
+                 "🚫 Відхилено — в канал не піде. Що виправити — напиши Claude."))
+        await cb.answer(text)
+        try:
+            other = "gdr" if status == "approved" else "gda"
+            label = ("🚫 Передумал — отклонить" if ru else "🚫 Передумав — відхилити") if status == "approved" else (
+                "✅ Передумал — одобрить" if ru else "✅ Передумав — схвалити")
+            await cb.message.edit_reply_markup(reply_markup=InlineKeyboardMarkup(inline_keyboard=[[
+                InlineKeyboardButton(text=label, callback_data=f"{other}:{slug}")]]))
+            await cb.message.reply(text)
+        except Exception:
+            pass
+
     @r.callback_query(F.data.startswith(("npc:", "npn:")))
     async def news_action(cb: CallbackQuery) -> None:
         if not app.cfg.is_owner(cb.from_user.id) or app.channel is None:

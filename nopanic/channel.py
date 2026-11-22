@@ -124,7 +124,8 @@ class Channel:
         if not need or not free_slots:
             return
         used = await self.db.used_guides()
-        bank = [g for g in guides.load_all() if g.approved and g.slug not in used]
+        reviews = await self.db.guide_reviews()
+        bank = [g for g in guides.load_all() if guides.is_approved(g, reviews) and g.slug not in used]
         for slot, g in zip(free_slots[:need], bank):
             await self.db.add_post(day, slot, "guide", g.title, guides.render(g), f"guide:{g.slug}")
         if len(bank) < need:

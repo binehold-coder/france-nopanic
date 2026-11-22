@@ -9,7 +9,9 @@ Each guide is a file content/guides/<slug>.md:
     Text of the post (plain text, Ukrainian).
     🔗 https://www.ameli.fr/...   (optional source line)
 
-Only `status: approved` guides are published — Женя approves each one after reading it.
+Only approved guides are published — Женя approves each one after reading it, either by
+`status: approved` in the file or with the ✅ button under /guides in the bot (stored in the DB,
+which wins over the file, so a ✅/🚫 in the bot always has the last word).
 """
 
 from __future__ import annotations
@@ -70,3 +72,10 @@ def render(g: Guide) -> str:
         else:
             lines.append(e(line))
     return f"{e(g.emoji)} <b>{e(g.title)}</b>\n\n" + "\n".join(lines)
+
+
+def is_approved(g: Guide, reviews: dict[str, str]) -> bool:
+    decision = reviews.get(g.slug)
+    if decision is not None:
+        return decision == "approved"
+    return g.approved
