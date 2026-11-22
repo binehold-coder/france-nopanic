@@ -1,0 +1,20 @@
+name: Logs
+
+# Manual: print the bot's recent log from the server (no restart, no deploy).
+on:
+  workflow_dispatch:
+  push:
+    branches: [ops/logs]
+
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            S=""; [ "$(id -u)" = 0 ] || S="sudo -n"
+            $S journalctl -u france-nopanic -n 150 --no-pager --since "-3h"
