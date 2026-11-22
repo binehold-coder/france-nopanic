@@ -83,7 +83,16 @@ async def _fetch_one(session: aiohttp.ClientSession, name: str, kind: str, url: 
         title = _clean(e.get("title", ""), 200)
         if not link.startswith("http") or not title:
             continue
-        items.append(Item(name, kind, title, _clean(e.get("summary", ""), 400), link, _published(e)))
+        source = name
+        src = e.get("source")
+        if src and getattr(src, "get", None) and src.get("title"):  # Google News: real publisher
+            source = _clean(src.get("title"), 60)
+            if title.endswith(" - " + source):
+                title = title[: -len(source) - 3]
+        summary = _clean(e.get("summary", ""), 400)
+        if name == "Google News":
+            summary = ""  # Google News summaries just repeat the title as HTML links
+        items.append(Item(source, kind, title, summary, link, _published(e)))
     return items, f"ok ({len(items)})" if items else "empty"
 
 
@@ -206,7 +215,10 @@ def render(d: Draft) -> str:
 async def _check() -> None:
     items, status = await fetch_all()
     for (name, kind, url) in FEEDS:
-        print(f"{status[url]:>10}  {kind:6}  {name:12}  {url}")
+        print(f"{status[url]:>10}  {kind:8}  {name:12}  {url[:110]}")
+    for it in items:
+        if it.kind in ("official", "ua"):
+            print(f"   · [{it.kind}] {it.source}: {it.title[:110]}")
     print(f"Всего записей: {len(items)}")
 
 
