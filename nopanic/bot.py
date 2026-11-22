@@ -147,26 +147,39 @@ def build_router(app: App) -> Router:
         if not app.cfg.is_owner(message.from_user.id):
             return
         s = await app.db.stats(app.cfg.free_letters)
+        ru = await user_lang(message.from_user.id) == "ru"
+        L = (lambda r_, u_: r_ if ru else u_)
         await message.answer(
-            "📊 Статистика\n"
-            f"Користувачів: {s['users']}\n"
-            f"Листів усього: {s['letters']} (сьогодні: {s['letters_today']})\n"
-            f"Дійшли до ліміту: {s['at_limit']}\n"
-            f"Нагадувань у черзі: {s['reminders_pending']}\n"
-            f"Токени: вхід {s['input_tokens']:,}, вихід {s['output_tokens']:,}\n"
-            f"Режим: {app.cfg.access_mode}; моделі: {app.cfg.letter_model} / {app.cfg.chat_model}\n"
-            f"Нейромережа: {'✅' if app.llm.enabled else '❌ немає ключа'}"
+            L("📊 Статистика\n", "📊 Статистика\n")
+            + L("Пользователей", "Користувачів") + f": {s['users']}\n"
+            + L("Писем всего", "Листів усього") + f": {s['letters']} ("
+            + L("сегодня", "сьогодні") + f": {s['letters_today']})\n"
+            + L("Дошли до лимита", "Дійшли до ліміту") + f": {s['at_limit']}\n"
+            + L("Напоминаний в очереди", "Нагадувань у черзі") + f": {s['reminders_pending']}\n"
+            + L("Токены: вход", "Токени: вхід") + f" {s['input_tokens']:,}, "
+            + L("выход", "вихід") + f" {s['output_tokens']:,}\n"
+            + L("Режим", "Режим") + f": {app.cfg.access_mode}; "
+            + L("модели", "моделі") + f": {app.cfg.letter_model} / {app.cfg.chat_model}\n"
+            + L("Нейросеть", "Нейромережа") + ": "
+            + ("✅" if app.llm.enabled else L("❌ нет ключа", "❌ немає ключа"))
         )
 
     @r.message(Command("channel_test"))
     async def channel_test(message: Message, bot: Bot) -> None:
         if not app.cfg.is_owner(message.from_user.id):
             return
+        ru = await user_lang(message.from_user.id) == "ru"
         try:
             sent = await bot.send_message(app.cfg.channel, "🔧 Тест: бот може публікувати в канал. Цей пост можна видалити.")
-            await message.answer(f"✅ Пост у {app.cfg.channel} опубліковано (id {sent.message_id}). Видали його в каналі.")
+            await message.answer(
+                f"✅ Пост в {app.cfg.channel} опубликован (id {sent.message_id}). Удали его в канале." if ru else
+                f"✅ Пост у {app.cfg.channel} опубліковано (id {sent.message_id}). Видали його в каналі."
+            )
         except Exception as e:  # noqa: BLE001 — show the owner exactly what Telegram said
-            await message.answer(f"❌ Не вийшло опублікувати в {app.cfg.channel}: {e}")
+            await message.answer(
+                (f"❌ Не получилось опубликовать в {app.cfg.channel}: {e}" if ru else
+                 f"❌ Не вийшло опублікувати в {app.cfg.channel}: {e}")
+            )
 
     # --- letters ---------------------------------------------------------------
     @r.message(F.photo | F.document)
